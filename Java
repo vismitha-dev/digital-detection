@@ -1,0 +1,185 @@
+const API = "http://127.0.0.1:5000/api";
+
+const form = document.getElementById("detectForm");
+const fileInput = document.getElementById("evidence");
+const preview = document.getElementById("preview");
+const message = document.getElementById("message");
+const result = document.getElementById("result");
+const detectBtn = document.getElementById("detectBtn");
+
+// Image and video preview
+fileInput.addEventListener("change", function () {
+    preview.innerHTML = "";
+
+    const file = this.files[0];
+    if (!file) return;
+
+    const url = URL.createObjectURL(file);
+
+    if (file.type.startsWith("image/")) {
+        const img = document.createElement("img");
+        img.src = url;
+        img.alt = "Selected evidence preview";
+        preview.appendChild(img);
+    } else if (file.type.startsWith("video/")) {
+        const video = document.createElement("video");
+        video.src = url;
+        video.controls = true;
+        preview.appendChild(video);
+    } else {
+        preview.textContent = "Please select a supported image or video.";
+    }
+});
+
+// Submit report and evidence
+form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+
+    message.textContent = "";
+    result.classList.add("hidden");
+
+    const file = fileInput.files[0];
+
+    if (!file) {
+        message.textContent = "Please upload an image or video.";
+        return;
+    }
+
+    const allowedTypes = [
+        "image/jpeg", "image/png", "image/webp",
+        "video/mp4", "video/quicktime",
+        "video/x-msvideo", "video/x-matroska"
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+        message.textContent = "Unsupported file type. Choose JPG, PNG, WEBP, MP4, AVI or MOV.";
+        return;
+    }
+
+    const data = new FormData(form);
+
+    detectBtn.disabled = true;
+    detectBtn.textContent = "Analyzing...";
+    message.textContent = "Uploading evidence and analyzing. Please wait...";
+
+    try {
+        const response = await fetch(`${API}/detect`, {
+            method: "POST",
+            body: data
+        });
+
+        const output = await response.json();
+
+        if (!response.ok) {
+            throw new Error(output.error || "Detection failed.");
+        }
+
+        message.textContent = "Analysis completed successfully.";
+
+        result.innerHTML = `
+            <h3>Detection Result</h3>
+            <p><strong>Case ID:</strong> ${escapeHTML(output.case_id)}</p>
+            <p><strong>Device:</strong> ${escapeHTML(output.device_name)}</p>
+            <p><strong>Location:</strong> ${escapeHTML(output.location)}</p>
+            <p><strong>People Detected:</strong> ${Number(output.people_detected) || 0}</p>
+            <p><strong>Status:</strong> ${escapeHTML(output.status)}</p>
+            <p><strong>Notice:</strong> This result is an investigation lead, not proof of identity or guilt.</p>
+        `;
+
+        result.classList.remove("hidden");
+        form.reset();
+        preview.innerHTML = "";
+
+        await loadDashboard();
+        await loadHistory();
+
+    } catch (error) {
+        message.textContent = error.message + " Check that the Flask backend is running.";
+    } finally {
+        detectBtn.disabled = false;
+        detectBtn.textContent = "Start Detection";
+    }
+});
+
+// Prevent HTML injection in returned text
+function escapeHTML(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    })[char]);
+}
+
+// Load dashboard statistics
+async function loadDashboard() {
+    try {
+        const response = await fetch(`${API}/incidents`);
+        if (!response.ok) throw new Error("Dashboard unavailable");
+
+        const data = await response.json();
+
+        document.getElementById("totalReports").textContent =
+            data.stats?.total_reports ?? 0;
+
+        document.getElementById("totalAnalyses").textContent =
+            data.stats?.total_analyses ?? 0;
+
+        document.getElementById("totalPeople").textContent =
+            data.stats?.total_people_detected ?? 0;
+
+        document.getElementById("openCases").textContent =
+            data.stats?.open_cases ?? 0;
+
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+// Load incident history
+async function loadHistory() {
+    const tbody = document.getElementById("historyBody");
+
+    try {
+        const response = await fetch(`${API}/incidents`);
+        if (!response.ok) throw new Error("History unavailable");
+
+        const data = await response.json();
+        const incidents = data.incidents || [];
+
+        tbody.innerHTML = "";
+
+        if (incidents.length === 0) {
+            tbody.innerHTML =
+                '<tr><td colspan="5">No incident records available.</td></tr>';
+            return;
+        }
+
+        incidents.forEach(item => {
+            const row = document.createElement("tr");
+
+            [
+                item.case_id,
+                item.device_name,
+                item.location,
+                item.people_detected,
+                item.status
+            ].forEach(value => {
+                const cell = document.createElement("td");
+                cell.textContent = value ?? "-";
+                row.appendChild(cell);
+            });
+
+            tbody.appendChild(row);
+        });
+
+    } catch (error) {
+        tbody.innerHTML =
+            '<tr><td colspan="5">Start the backend to load incident history.</td></tr>';
+    }
+}
+
+// Initial page loading
+loadDashboard();
+loadHistory();
